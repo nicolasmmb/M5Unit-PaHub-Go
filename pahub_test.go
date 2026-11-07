@@ -67,6 +67,9 @@ func (b *fakeI2C) Tx(addr uint16, w, r []byte) error {
 	return errNack
 }
 
+// NewAt2 skips the presence check, useful for fakes with another address.
+func NewAt2(bus I2C, addr uint16) *Device { return &Device{bus: bus, addr: addr} }
+
 func newDev(t *testing.T) (*Device, *fakeI2C) {
 	t.Helper()
 	bus := fakeBus()
@@ -356,5 +359,61 @@ func TestConcurrent(t *testing.T) {
 	wg.Wait()
 	if bus.mask != 0 {
 		t.Fatalf("mask after concurrency = %#02x, want 0", bus.mask)
+	}
+}
+
+// TestDoRestoresOnError proves the defer: fn fails, the mask still comes back.
+func TestDoRestoresOnError(t *testing.T) {
+	d, bus := newDev(t)
+	if err := d.Enable(0); err != nil {
+		t.Fatal(err)
+	}
+	want := errors.New("work failed")
+	if err := d.Do(2, func() error { return want }); err != want {
+		t.Fatalf("Do error = %v, want %v", err, want)
+	}
+	if bus.mask != 0x01 {
+		t.Fatalf("mask after failed Do = %#02x, want 0x01", bus.mask)
+	}
+	if err := d.Do(2, func() error { return nil }); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	if bus.mask != 0x01 {
+		t.Fatalf("mask after Do = %#02x, want 0x01", bus.mask)
+	}
+	if err := d.Do(NumChannels, func() error { return nil }); err != ErrBadChannel {
+		t.Fatalf("Do(6) = %v", err)
+	}
+}
+
+// TestDoNested uses two hubs, the case the unit was made for: the outer channel
+// stays enabled while the inner hub runs, because Do restores instead of
+// clearing.
+func TestDoNested(t *testing.T) {
+	outerBus := fakeBusAt(0x70)
+	innerBus := fakeBusAt(0x71)
+	dev := &fakeDev{addr: 0x29, ch: 3}
+	innerBus.devs = []*fakeDev{dev}
+
+	outer := New(outerBus)
+	inner := NewAt2(innerBus, 0x71)
+	if err := outer.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := inner.Init(); err != nil {
+		t.Fatal(err)
+	}
+
+	var rx [1]byte
+	err := outer.Do(2, func() error {
+		return inner.Do(3, func() error {
+			return innerBus.Tx(0x29, nil, rx[:])
+		})
+	})
+	if err != nil {
+		t.Fatalf("nested Do: %v", err)
+	}
+	if outerBus.mask != 0 || innerBus.mask != 0 {
+		t.Fatalf("masks after nesting: outer %#02x inner %#02x", outerBus.mask, innerBus.mask)
 	}
 }
