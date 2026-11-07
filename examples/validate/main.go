@@ -33,6 +33,16 @@ func main() {
 	hub := pahub.New(i2c)
 	println("TEST", test, "-", testName(test))
 
+	// A máscara do PCA9548A sobrevive ao reset do MCU: o unit continua
+	// alimentado pelo Grove. Sempre começar de um estado conhecido.
+	if err := hub.Init(); err != nil {
+		println("FAIL init:", err.Error())
+		return
+	}
+	if mask, err := hub.Mask(); err == nil {
+		println("mask at boot:", mask, "(after Init)")
+	}
+
 	for {
 		switch test {
 		case 1:

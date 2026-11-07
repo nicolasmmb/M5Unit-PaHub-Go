@@ -162,10 +162,33 @@ canal desligado, `Scan` com e sem devices, endereço inválido, canal 6 e 7
 - [ ] Validação em hardware com o unit.
 - [ ] Publicar e tag `v0.1.0`.
 
+## 8.1 Resultado de hardware (2026-11-06)
+
+Placa M5StickC Plus2, unit PaHub v2.1 real, um teste por gravação.
+
+| Teste | Resultado |
+|---|---|
+| 1 presença | PASS. `mask after Init = 0`. |
+| 2 `Select` 0 a 5 | PASS. Máscaras `1,2,4,8,16,32` lidas de volta. |
+| 3 `Scan` nos 6 canais | PASS. 6 canais varridos, todos vazios. |
+| 4 restauração após `Tx` | PASS. Máscara volta ao valor anterior. |
+| 5 dois bits ligados | PASS. `ch0 + ch3 = 0x09`. |
+
+### Achado: a máscara sobrevive ao reset do MCU
+
+O unit continua alimentado pelos 5 V do Grove durante o reset. O PCA9548A
+mantém a última máscara. Firmware que assume `0x00` depois do reset fala com o
+canal errado. Regra: chamar `Init()` ou `Close()` no boot. O primeiro teste 4
+mostrou `33` em vez de `1` por este motivo.
+
+Isto já está no README e no firmware de validação.
+
 ## 9. Pendências conhecidas
 
-- Validar em hardware: presença, troca de canal, dois devices no mesmo endereço.
-- Medir a máscara real na saída do `Init` (esperado 0x00).
+- [x] Validar em hardware: presença, `Select`, `Scan`, restauração, aninhamento.
+- [x] Máscara real na saída do `Init`: `0x00`.
+- [ ] Dois devices com o mesmo endereço em canais diferentes (precisa plugar).
+- [ ] Cache da máscara: corta uma transação por `Tx`.
 - Testar aninhamento com dois hubs (dois `Device`, dois endereços).
 - CI de agnosticismo: compilar para `pico` e `arduino-nano33`.
 

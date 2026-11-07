@@ -144,6 +144,28 @@ Host, fake bus, so the numbers show only the driver cost (see
 RAM: `Device` 32 bytes. Flash: `examples/scan` 20.1 KB, `examples/validate`
 19.3 KB on `m5stick-c`.
 
+## Hardware results
+
+Validated on an M5StickC Plus2 with a real Unit PaHub v2.1, one test per flash:
+
+| Test | Result |
+|---|---|
+| 1 presence | PASS, `mask after Init = 0` |
+| 2 select 0..5 | PASS, masks `1, 2, 4, 8, 16, 32` read back |
+| 3 scan all channels | PASS, six channels scanned, all empty (no devices attached) |
+| 4 restore mask after `Tx` | PASS, mask returns to the previous value |
+| 5 two bits enabled (nesting) | PASS, `ch0 + ch3 = 0x09` |
+
+### Finding: the mask survives an MCU reset
+
+The unit stays powered by the Grove 5 V rail while the MCU resets, so the
+PCA9548A keeps the last mask. A firmware that assumes `0x00` after reset will
+talk to the wrong channel.
+
+**Always call `Init()` (or `Close()`) at boot.** The first run of test 4 showed
+`mask = 33` instead of `1` for exactly this reason: the mask was left by the
+previous test.
+
 ## Validation
 
 `examples/validate` runs **one test per flash**, in a loop. Select the test in
@@ -169,7 +191,7 @@ make scan PORT=/dev/cu.usbserial-XXXX
 | Mask is read on every operation | `Tx` costs 4 bus transactions instead of 3 | Cache the mask in `Device`, invalidate on `Mask`/`Init`; keep the read as an option |
 | No `/INT` support | The unit does not expose the interrupt pin | Nothing to do on this unit |
 | Nested hubs are manual | Two `Device` values and two address writes | Add a `Route` helper if it is used often |
-| Not validated in hardware yet | Behaviour on a real PCA9548A is unproven | Flash `examples/validate` with the unit attached |
+| ~~Not validated in hardware~~ | Validated on a real PaHub v2.1: 5/5 tests | Done |
 | `Scan` allocates | Not usable in a control loop | Provide `ScanInto(dst []uint8)` if needed |
 
 ## References

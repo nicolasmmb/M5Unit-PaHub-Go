@@ -44,11 +44,25 @@ make agnostic   # compiles the constructor for pico and arduino-nano33
 - `New` makes one allocation (the `Device`).
 - `Scan` allocates the result slice on purpose.
 
+## Hardware measurements (M5StickC Plus2 + PaHub v2.1)
+
+| Test | Result | Note |
+|---|---|---|
+| Presence (`Init` + read-back) | PASS | mask 0 after write |
+| `Select` 0..5 | PASS | read-back `1,2,4,8,16,32` |
+| `Scan` on six empty channels | PASS | 0 devices, mask restored to 0 |
+| Mask restore after `Tx` | PASS | mask returns to the previous value |
+| Two bits enabled | PASS | `0x09` for ch0 + ch3 |
+
+Timing not measured on the target: the I2C transfer dominates and needs a scope
+or a bench supply to be measured properly. The mask read-back is the timing-free
+proof that the writes land.
+
 ## Measurements still missing
 
 | Item | Why it matters |
 |---|---|
 | Real `Select` latency on hardware | The host number ignores the I2C transfer |
-| Mask read-back on a real PCA9548A | Confirms the presence check |
-| Behaviour with a device on two channels with the same address | The main use case of the unit |
+| Behaviour with a device on two channels with the same address | The main use case of the unit — needs one device plugged into two ports |
+| Real `Tx` timing at 100/400 kHz | Needs a scope or a bench measurement |
 | Nested hubs (two devices, two addresses) | Confirms the "restore" decision |
