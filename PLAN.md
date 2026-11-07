@@ -201,7 +201,8 @@ Feito em 2026-11-07, branch `feat/defer-restore`.
 - [x] Máscara real na saída do `Init`: `0x00`.
 - [ ] Dois devices com o mesmo endereço em canais diferentes (precisa plugar).
 - [x] `defer` na restauração + `Do` para aninhamento.
-- [ ] Cache da máscara: corta uma transação por `Tx`.
+- [x] Cache da máscara: `Tx` quente custa 3 transações em vez de 4.
+- [x] `ScanInto` sem alocação.
 - Testar aninhamento com dois hubs (dois `Device`, dois endereços).
 - CI de agnosticismo: compilar para `pico` e `arduino-nano33`.
 

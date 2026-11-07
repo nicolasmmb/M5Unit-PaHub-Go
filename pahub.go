@@ -50,11 +50,13 @@ var (
 // Device is one PaHub. It is safe for concurrent use: every operation takes a
 // mutex because the channel mask is global state of the I2C bus.
 type Device struct {
-	mu   sync.Mutex
-	bus  I2C
-	addr uint16
-	tx   [1]byte // scratch for the control register write, so Tx does not allocate
-	rx   [1]byte // scratch for the read-back
+	mu        sync.Mutex
+	bus       I2C
+	addr      uint16
+	tx        [1]byte // scratch for the control register write, so Tx does not allocate
+	rx        [1]byte // scratch for the read-back
+	mask      uint8   // cached control register
+	knowsMask bool    // cache is valid
 }
 
 // New returns a Device at the default address. Call Init to check presence.
@@ -185,22 +187,39 @@ func (d *Device) TxContext(ctx context.Context, channel uint8, addr uint16, w, r
 }
 
 // Scan lists the addresses that answer on channel, skipping the hub itself.
-// It allocates the result, so do not call it in a control loop.
+// It allocates the result, so do not call it in a control loop; ScanInto is the
+// allocation-free form.
 func (d *Device) Scan(channel uint8) ([]uint8, error) {
+	found, err := d.ScanInto(channel, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(found) == 0 {
+		return nil, nil
+	}
+	out := make([]uint8, len(found))
+	copy(out, found)
+	return out, nil
+}
+
+// ScanInto is Scan with a caller-owned buffer. It never allocates: dst is
+// reused and the returned slice points into it. Append-style: the result starts
+// at dst[:0].
+func (d *Device) ScanInto(channel uint8, dst []uint8) ([]uint8, error) {
 	if err := checkChannel(channel); err != nil {
 		return nil, err
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	var found []uint8
+	dst = dst[:0]
 	err := d.doLocked(channel, func() error {
 		for addr := uint16(0x08); addr <= 0x77; addr++ {
 			if addr == d.addr {
 				continue
 			}
 			if d.bus.Tx(addr, nil, d.rx[:1]) == nil {
-				found = append(found, uint8(addr))
+				dst = append(dst, uint8(addr))
 			}
 		}
 		return nil
@@ -208,7 +227,16 @@ func (d *Device) Scan(channel uint8) ([]uint8, error) {
 	if err != nil {
 		return nil, err
 	}
-	return found, nil
+	return dst, nil
+}
+
+// Invalidate drops the cached control register. Call it when another Device or
+// another part of the firmware changes the channels of this hub behind the
+// back of this value.
+func (d *Device) Invalidate() {
+	d.mu.Lock()
+	d.knowsMask = false
+	d.mu.Unlock()
 }
 
 // Do enables channel, runs fn and restores the previous mask with defer, so
@@ -232,7 +260,7 @@ func (d *Device) Do(channel uint8, fn func() error) error {
 // doLocked is the shared select/run/restore path. The caller holds the mutex.
 // The named return keeps the restore error when fn itself succeeded.
 func (d *Device) doLocked(channel uint8, fn func() error) (err error) {
-	saved, err := d.readMaskLocked()
+	saved, err := d.currentMaskLocked()
 	if err != nil {
 		return err
 	}
@@ -261,7 +289,9 @@ func (d *Device) readMaskLocked() (uint8, error) {
 	if err := d.bus.Tx(d.addr, nil, d.rx[:1]); err != nil {
 		return 0, ErrNotConnected
 	}
-	return d.rx[0] & channelMask, nil
+	d.mask = d.rx[0] & channelMask
+	d.knowsMask = true
+	return d.mask, nil
 }
 
 // writeMaskLocked writes the control register. The caller holds the mutex.
@@ -273,7 +303,18 @@ func (d *Device) writeMaskLocked(mask uint8) error {
 	if err := d.bus.Tx(d.addr, d.tx[:1], nil); err != nil {
 		return ErrNotConnected
 	}
+	d.mask = mask & channelMask
+	d.knowsMask = true
 	return nil
+}
+
+// currentMaskLocked returns the control register, using the cache when valid.
+// The caller holds the mutex.
+func (d *Device) currentMaskLocked() (uint8, error) {
+	if d.knowsMask {
+		return d.mask, nil
+	}
+	return d.readMaskLocked()
 }
 
 func (d *Device) validateLocked() error {

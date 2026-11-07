@@ -417,3 +417,78 @@ func TestDoNested(t *testing.T) {
 		t.Fatalf("masks after nesting: outer %#02x inner %#02x", outerBus.mask, innerBus.mask)
 	}
 }
+
+// TestTxCache covers the cache: a warm Tx costs 3 bus calls instead of 4, and
+// Invalidate brings the read back.
+func TestTxCache(t *testing.T) {
+	dev := &fakeDev{addr: 0x20, ch: 2}
+	bus := fakeBus(dev)
+	d := New(bus)
+	if err := d.Init(); err != nil {
+		t.Fatal(err)
+	}
+	var rx [1]byte
+
+	before := bus.txCount
+	if err := d.Tx(2, 0x20, nil, rx[:]); err != nil {
+		t.Fatal(err)
+	}
+	if calls := bus.txCount - before; calls != 3 {
+		t.Fatalf("warm Tx used %d bus calls, want 3 (write, device, restore)", calls)
+	}
+
+	d.Invalidate()
+	before = bus.txCount
+	if err := d.Tx(2, 0x20, nil, rx[:]); err != nil {
+		t.Fatal(err)
+	}
+	if calls := bus.txCount - before; calls != 4 {
+		t.Fatalf("invalidated Tx used %d bus calls, want 4", calls)
+	}
+
+	// A failed device transaction still restores and keeps the cache valid.
+	if err := d.Tx(5, 0x20, nil, rx[:]); err == nil {
+		t.Fatal("expected a NACK on the empty channel")
+	}
+	if got, _ := d.Mask(); got != 0 {
+		t.Fatalf("mask after failed Tx = %#02x", got)
+	}
+}
+
+// TestScanInto does not allocate when the caller provides capacity.
+func TestScanInto(t *testing.T) {
+	a := &fakeDev{addr: 0x20, ch: 1}
+	b := &fakeDev{addr: 0x50, ch: 1}
+	bus := fakeBus(a, b)
+	d := New(bus)
+	if err := d.Init(); err != nil {
+		t.Fatal(err)
+	}
+
+	buf := make([]uint8, 0, 8)
+	got, err := d.ScanInto(1, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != 0x20 || got[1] != 0x50 {
+		t.Fatalf("ScanInto = %v", got)
+	}
+
+	// Reuse and no growth: the same backing array comes back.
+	again, err := d.ScanInto(1, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cap(again) != cap(buf) {
+		t.Fatalf("capacity changed: %d -> %d (allocated)", cap(buf), cap(again))
+	}
+
+	allocs := testing.AllocsPerRun(20, func() {
+		if _, err := d.ScanInto(1, buf); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("ScanInto allocates %v", allocs)
+	}
+}

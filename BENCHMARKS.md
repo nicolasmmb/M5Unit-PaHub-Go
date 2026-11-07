@@ -10,14 +10,15 @@
 
 | Benchmark | Scenario | ns/op | allocs/op | bus calls/op |
 |---|---|---:|---:|---:|
-| `Tx` | read mask, set channel, device op, restore | ~18,2 | 0 | 4 |
+| `Tx` (warm cache) | set channel, device op, restore | ~18,2 | 0 | 3 |
 | `Select` | single write | ~13,2 | 0 | 1 |
 | `Enable` | read + write | ~12,7 | 0 | 2 |
 | `Mask` | single read | ~12,7 | 0 | 1 |
 
 The host numbers only show the driver overhead. On the wire the I2C bus
-dominates: at 400 kHz a 2-byte transfer is about 50–60 µs, so one `Tx` costs
-about 200–250 µs of bus time, and `Select` about 55 µs.
+dominates: at 400 kHz a 2-byte transfer is about 50–60 µs, so a warm `Tx` costs
+about 150–180 µs of bus time, and `Select` about 55 µs. The first call after
+`New` or after `Invalidate()` adds one read: ~200–250 µs.
 
 ## Footprint
 
