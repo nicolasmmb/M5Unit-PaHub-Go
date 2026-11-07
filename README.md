@@ -98,7 +98,9 @@ println("model id", id[0])
 | `Close() error` | Mask 0 |
 | `Tx(ch, addr, w, r) error` | Select, transact, restore |
 | `TxContext(ctx, ch, addr, w, r) error` | Same with a cancellation check |
-| `Scan(ch) ([]uint8, error)` | Addresses that answer, hub excluded |
+| `Scan(ch) ([]uint8, error)` | Addresses that answer, hub excluded (allocates) |
+| `ScanInto(ch, dst) ([]uint8, error)` | Same, with a caller buffer: never allocates |
+| `Invalidate()` | Drops the cached mask |
 | `Do(ch, fn) error` | Runs `fn` with the channel enabled, restores the mask with `defer` |
 
 Errors: `ErrNotConnected`, `ErrBadAddress`, `ErrBadChannel`. Compare with
@@ -141,15 +143,20 @@ with the device locked: inside it, call methods of the **other** device only.
 
 ## Cost on the wire
 
-Each `Tx` performs four bus transactions:
+The control register is cached in `Device`, so a warm `Tx` performs three bus
+transactions:
 
 ```
-read mask  ->  write mask (channel on)  ->  device transaction  ->  write mask (restore)
+write mask (channel on)  ->  device transaction  ->  write mask (restore)
 ```
 
-At 400 kHz each of these is roughly 50–60 µs, so a `Tx` costs about 200–250 µs
-of bus time. `Select` is one write. If that matters, cache the mask: see the
-gaps section.
+The first call after `New`, or after `Invalidate()`, also reads the mask. At
+400 kHz each transaction is roughly 50–60 µs, so a warm `Tx` costs about
+150–180 µs of bus time and `Select` about 55 µs.
+
+The cache is invalidated by `Init()`? No: `Init` writes and reads, so the cache
+is valid afterwards. Call `Invalidate()` when another `Device` value or another
+part of the firmware changes this hub behind your back.
 
 ## Benchmarks
 
@@ -210,11 +217,10 @@ make scan PORT=/dev/cu.usbserial-XXXX
 
 | Gap | Effect | Next step |
 |---|---|---|
-| Mask is read on every operation | `Tx` costs 4 bus transactions instead of 3 | Cache the mask in `Device`, invalidate on `Mask`/`Init`; keep the read as an option |
 | No `/INT` support | The unit does not expose the interrupt pin | Nothing to do on this unit |
 | Nested hubs are manual | Two `Device` values and two address writes | Add a `Route` helper if it is used often |
 | ~~Not validated in hardware~~ | Validated on a real PaHub v2.1: 5/5 tests | Done |
-| `Scan` allocates | Not usable in a control loop | Provide `ScanInto(dst []uint8)` if needed |
+
 
 ## References
 
