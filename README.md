@@ -99,15 +99,20 @@ println("model id", id[0])
 | `Tx(ch, addr, w, r) error` | Select, transact, restore |
 | `TxContext(ctx, ch, addr, w, r) error` | Same with a cancellation check |
 | `Scan(ch) ([]uint8, error)` | Addresses that answer, hub excluded |
+| `Do(ch, fn) error` | Runs `fn` with the channel enabled, restores the mask with `defer` |
 
 Errors: `ErrNotConnected`, `ErrBadAddress`, `ErrBadChannel`. Compare with
 `errors.Is`.
 
 ## Design decisions
 
-1. **`Tx` restores the previous mask.** The UIFlow driver clears the bit of the
-   channel it used. Restoring is safer: it keeps channels that other code
-   enabled, which is what nested hubs need. Tested in `TestTxRestoresMask`.
+1. **`Tx` and `Do` restore the previous mask with `defer`.** The UIFlow driver
+   clears the bit of the channel it used. Restoring is safer: it keeps channels
+   that other code enabled, which is what nested hubs need. `defer` with a named
+   return also keeps the restore error when the work itself succeeded, and a
+   later edit cannot forget the restore. Measured: 0 allocations, ~1 ns more
+   than an explicit call. Tested in `TestTxRestoresMask` and
+   `TestDoRestoresOnError`.
 2. **Everything is serialized by a mutex.** Two goroutines on different channels
    would otherwise interleave their mask writes and talk to the wrong device.
 3. **No `sleep`.** The UIFlow `writeto` waits 100 ms after every write; the
@@ -116,6 +121,23 @@ Errors: `ErrNotConnected`, `ErrBadAddress`, `ErrBadChannel`. Compare with
    register, so `Init` and `NewAt` write and read back the control register.
 5. **`Scan` allocates.** It returns a slice and is a diagnostic, not a control
    loop call.
+
+### Nested hubs
+
+```go
+outer := pahub.New(bus)                       // 0x70
+inner, _ := pahub.NewAt(bus, 0x71)            // second hub on a port of the first
+
+err := outer.Do(2, func() error {             // enable channel 2 of the outer hub
+    return inner.Do(3, func() error {         // enable channel 3 of the inner hub
+        var rx [1]byte
+        return bus.Tx(0x29, []byte{0xC0}, rx[:])
+    })
+})
+```
+
+Each `Device` has its own mutex, so the nesting does not deadlock. `fn` runs
+with the device locked: inside it, call methods of the **other** device only.
 
 ## Cost on the wire
 

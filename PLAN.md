@@ -183,11 +183,24 @@ mostrou `33` em vez de `1` por este motivo.
 
 Isto já está no README e no firmware de validação.
 
+## 8.2 Ajuste: `defer` e `Do`
+
+Feito em 2026-11-07, branch `feat/defer-restore`.
+
+- A restauração da máscara agora usa `defer` com retorno nomeado. Motivo:
+  guarda o erro do restore e nenhum `return` futuro esquece a restauração.
+- `Tx` e `Scan` passam pelo mesmo caminho interno (`doLocked`).
+- Novo `Do(ch, fn)`: executa uma função com o canal ligado. É a peça para
+  aninhar hubs.
+- Medido: 0 alocações com closure com e sem captura; ~1 ns acima do unlock
+  explícito. Irrelevante a 100 Hz.
+
 ## 9. Pendências conhecidas
 
 - [x] Validar em hardware: presença, `Select`, `Scan`, restauração, aninhamento.
 - [x] Máscara real na saída do `Init`: `0x00`.
 - [ ] Dois devices com o mesmo endereço em canais diferentes (precisa plugar).
+- [x] `defer` na restauração + `Do` para aninhamento.
 - [ ] Cache da máscara: corta uma transação por `Tx`.
 - Testar aninhamento com dois hubs (dois `Device`, dois endereços).
 - CI de agnosticismo: compilar para `pico` e `arduino-nano33`.

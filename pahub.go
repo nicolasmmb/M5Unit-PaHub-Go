@@ -193,41 +193,64 @@ func (d *Device) Scan(channel uint8) ([]uint8, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	saved, err := d.readMaskLocked()
-	if err != nil {
-		return nil, err
-	}
-	if err := d.writeMaskLocked(saved | 1<<channel); err != nil {
-		return nil, err
-	}
 	var found []uint8
-	for addr := uint16(0x08); addr <= 0x77; addr++ {
-		if addr == d.addr {
-			continue
+	err := d.doLocked(channel, func() error {
+		for addr := uint16(0x08); addr <= 0x77; addr++ {
+			if addr == d.addr {
+				continue
+			}
+			if d.bus.Tx(addr, nil, d.rx[:1]) == nil {
+				found = append(found, uint8(addr))
+			}
 		}
-		if d.bus.Tx(addr, nil, d.rx[:1]) == nil {
-			found = append(found, uint8(addr))
-		}
-	}
-	if err := d.writeMaskLocked(saved); err != nil {
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return found, nil
 }
 
-func (d *Device) txLocked(channel uint8, addr uint16, w, r []byte) error {
+// Do enables channel, runs fn and restores the previous mask with defer, so
+// the mask comes back even when fn fails or a later edit adds an early return.
+//
+// It is the building block for nested hubs: two Devices have separate mutexes,
+// so hubA.Do(2, func() error { return hubB.Do(3, work) }) keeps both channels
+// enabled for work.
+//
+// fn runs with the device locked, so it must not call methods of this Device
+// (only methods of another Device are safe).
+func (d *Device) Do(channel uint8, fn func() error) error {
+	if err := checkChannel(channel); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.doLocked(channel, fn)
+}
+
+// doLocked is the shared select/run/restore path. The caller holds the mutex.
+// The named return keeps the restore error when fn itself succeeded.
+func (d *Device) doLocked(channel uint8, fn func() error) (err error) {
 	saved, err := d.readMaskLocked()
 	if err != nil {
 		return err
 	}
-	if err := d.writeMaskLocked(saved | 1<<channel); err != nil {
+	if err = d.writeMaskLocked(saved | 1<<channel); err != nil {
 		return err
 	}
-	txErr := d.bus.Tx(addr, w, r)
-	if restoreErr := d.writeMaskLocked(saved); txErr == nil {
-		txErr = restoreErr
-	}
-	return txErr
+	defer func() {
+		if restoreErr := d.writeMaskLocked(saved); err == nil {
+			err = restoreErr
+		}
+	}()
+	return fn()
+}
+
+func (d *Device) txLocked(channel uint8, addr uint16, w, r []byte) error {
+	return d.doLocked(channel, func() error {
+		return d.bus.Tx(addr, w, r)
+	})
 }
 
 // readMaskLocked reads the control register. The caller holds the mutex.
