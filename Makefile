@@ -46,13 +46,11 @@ examples:
 # Compile the public constructor for targets that are not ESP32. This is the
 # agnosticism gate of docs/LIB-AGNOSTIC-AUDIT.md.
 agnostic:
-	@mkdir -p /tmp/pahub-agn && cd /tmp/pahub-agn && \
-	  { printf 'module agn\n\ngo 1.26\n\nrequire %s v0.0.0\nreplace %s => %s\n' \
-	      "$(shell awk '/^module /{print $$2}' go.mod)" \
-	      "$(shell awk '/^module /{print $$2}' go.mod)" "$(CURDIR)" > go.mod; } && \
+	@rm -rf /tmp/pahub-agn && mkdir -p /tmp/pahub-agn && cd /tmp/pahub-agn && \
+	  MOD=$(shell awk '/^module /{print $$2}' go.mod) && \
+	  printf 'module agn\n\ngo 1.26\n\nrequire %s v0.0.0\nreplace %s => %s\n' "$$MOD" "$$MOD" "$(CURDIR)" > go.mod && \
+	  printf 'package main\n\nimport lib "%s"\n\nvar _ = lib.New\n\nfunc main() {}\n' "$$MOD" > main.go && \
 	  go mod tidy >/dev/null && \
-	  printf 'package main\n\nimport lib "%s"\n\nvar _ = lib.New\n\nfunc main() {}\n' \
-	      "$(shell awk '/^module /{print $$2}' go.mod)" > main.go && \
 	  $(TINYGO) build -target=pico -o /tmp/pahub-agn/pico.bin . && \
 	  $(TINYGO) build -target=arduino-nano33 -o /tmp/pahub-agn/nrf.bin . && \
 	  echo "agnostic: pico + arduino-nano33 OK"
